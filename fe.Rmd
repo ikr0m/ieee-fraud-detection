@@ -1,0 +1,397 @@
+---
+title: "Untitled"
+author: "Akifumi Eguchi"
+date: "8/8/2019"
+output: html_document
+---
+
+Ref: https://www.kaggle.com/andrew60909/lgb-starter-r
+https://www.kaggle.com/redfoongus/ieee-simple-eda-and-lightgbm-r
+
+```{r library}
+library(data.table); library(tidyverse); library(tidymodels); library(uwot); library(DataExplorer)
+library(irlba); library(fastknn); library(recipes); library(repr)
+library(sessioninfo); library(visdat); library(correlationfunnel); library(lightgbm); library(MLmetrics)
+```
+
+```{r import data, echo=FALSE}
+train_id <- fread("train_identity.csv") 
+train_transaction <- fread("train_transaction.csv")
+
+test_id <- fread("test_identity.csv") 
+test_transaction <- fread("test_transaction.csv") 
+
+y <- train_transaction$isFraud 
+train_transaction$isFraud <- NULL
+```
+
+
+## string pretreat
+```{r device}
+is_blank <- function(x) {is.na(x) | x == ""}
+
+train_id$DeviceType[is_blank(train_id$DeviceType)] <- gsub("", "unk", train_id$DeviceType[is_blank(train_id$DeviceType)])
+train_id$DeviceInfo[is_blank(train_id$DeviceInfo)] <- gsub("", "unk", train_id$DeviceInfo[is_blank(train_id$DeviceInfo)])
+
+test_id$DeviceType[is_blank(test_id$DeviceType)] <- gsub("", "unk", test_id$DeviceType[is_blank(test_id$DeviceType)])
+test_id$DeviceInfo[is_blank(test_id$DeviceInfo)] <- gsub("", "unk", test_id$DeviceInfo[is_blank(test_id$DeviceInfo)])
+
+train_id$DeviceInfo <- gsub("SAMSUNG ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("Lenovo ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("SAMSUNG-", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("HUAWEI ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("ZTE ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("Hisense ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("Blade ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("Moto ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("HTC ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("M4 ", "", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("iPhone", "iOS Device", train_id$DeviceInfo)
+train_id$DeviceInfo <- gsub("Microsoft", "Windows", train_id$DeviceInfo)
+
+test_id$DeviceInfo <- gsub("SAMSUNG ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("Lenovo ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("SAMSUNG-", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("HUAWEI ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("ZTE ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("Hisense ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("Blade ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("Moto ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("HTC ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("M4 ", "", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("iPhone", "iOS Device", test_id$DeviceInfo)
+test_id$DeviceInfo <- gsub("Microsoft", "Windows", test_id$DeviceInfo)
+
+temp_tr <- as.data.frame(str_split(train_id$DeviceInfo, "Build/", simplify = TRUE))
+temp_te <- as.data.frame(str_split(test_id$DeviceInfo, "Build/", simplify = TRUE))
+
+
+colnames(temp_tr) <- c("DeviceInfo","BuildInfo")
+colnames(temp_te) <- c("DeviceInfo","BuildInfo")
+
+train_id$DeviceInfo <- NULL
+test_id$DeviceInfo <- NULL
+
+train_id <- data.frame(train_id, temp_tr)
+test_id <- data.frame(test_id, temp_te)
+
+rm(temp_tr, temp_te); gc(); gc()
+
+train_id$BuildInfo <- as.character(train_id$BuildInfo)
+test_id$BuildInfo <- as.character(test_id$BuildInfo)
+
+```
+
+```{r agg1}
+levels(train_id$DeviceInfo) <- c(levels(train_id$DeviceInfo), 'other')
+temp <-as.data.frame(table(as.factor(train_id$DeviceInfo)))
+rownames(temp) <- temp[, 1]
+train_id$DeviceInfo <- as.factor(train_id$DeviceInfo)
+train_id[train_id$DeviceInfo %in% as.factor(rownames(subset(temp, temp$Freq <= 3))), 'DeviceInfo'] <- 'other'
+train_id$DeviceInfo <- droplevels(train_id$DeviceInfo)
+train_id$DeviceInfo <- as.character(train_id$DeviceInfo)
+
+
+levels(test_id$DeviceInfo) <- c(levels(test_id$DeviceInfo), 'other')
+temp <-as.data.frame(table(as.factor(test_id$DeviceInfo)))
+rownames(temp) <- temp[, 1]
+test_id$DeviceInfo <- as.factor(test_id$DeviceInfo)
+test_id[test_id$DeviceInfo %in% as.factor(rownames(subset(temp, temp$Freq <= 3))), 'DeviceInfo'] <- 'other'
+test_id$DeviceInfo <- droplevels(test_id$DeviceInfo)
+test_id$DeviceInfo <- as.character(test_id$DeviceInfo)
+
+
+
+levels(train_id$BuildInfo) <- c(levels(train_id$BuildInfo), 'other')
+temp <-as.data.frame(table(as.factor(train_id$BuildInfo)))
+rownames(temp) <- temp[, 1]
+train_id$BuildInfo <- as.factor(train_id$BuildInfo)
+train_id[train_id$BuildInfo %in% as.factor(rownames(subset(temp, temp$Freq <= 3))), 'BuildInfo'] <- 'other'
+train_id$BuildInfo <- droplevels(train_id$BuildInfo)
+train_id$BuildInfo <- as.character(train_id$BuildInfo)
+
+
+levels(test_id$BuildInfo) <- c(levels(test_id$BuildInfo), 'other')
+temp <-as.data.frame(table(as.factor(test_id$BuildInfo)))
+rownames(temp) <- temp[, 1]
+test_id$BuildInfo <- as.factor(test_id$BuildInfo)
+test_id[test_id$BuildInfo %in% as.factor(rownames(subset(temp, temp$Freq <= 3))), 'BuildInfo'] <- 'other'
+test_id$BuildInfo <- droplevels(test_id$BuildInfo)
+test_id$BuildInfo <- as.character(test_id$BuildInfo)
+
+
+```
+
+
+```{r email}
+email_col <- c("P_emaildomain", "R_emaildomain")
+
+train_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(yahoo|ymail|frontier|rocketmail).*", "yahoo", x)), .SDcols = email_col] 
+                   
+train_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(hotmail|outlook|live).*|msn.com", "hotmail", x)), .SDcols = email_col] 
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(gmail).*", "gmail", x)), .SDcols = email_col]        
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(netzero).*", "netzero", x)), .SDcols = email_col]   
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(icloud).*|mac.com|me.com", "apple", x)), .SDcols = email_col] 
+                                   
+train_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(prodigy|sbcglobal).*|att.net", "att", x)), .SDcols = email_col] 
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(centurylink|embarqmail).*|q.com", "centurylink", x)), .SDcols = email_col]  
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub("aim.com|aol.com", "aol", x)), .SDcols = email_col]   
+                                   
+train_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub("twc.com|charter.net", "spectrum", x)), .SDcols = email_col]                                   
+
+
+test_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(yahoo|ymail|frontier|rocketmail).*", "yahoo", x)), .SDcols = email_col] 
+                   
+test_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(hotmail|outlook|live).*|msn.com", "hotmail", x)), .SDcols = email_col] 
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(gmail).*", "gmail", x)), .SDcols = email_col]        
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(netzero).*", "netzero", x)), .SDcols = email_col]   
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(icloud).*|mac.com|me.com", "apple", x)), .SDcols = email_col] 
+                                   
+test_transaction[,(email_col) := 
+           lapply(.SD, function(x) gsub(".*(prodigy|sbcglobal).*|att.net", "att", x)), .SDcols = email_col] 
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub(".*(centurylink|embarqmail).*|q.com", "centurylink", x)), .SDcols = email_col]  
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub("aim.com|aol.com", "aol", x)), .SDcols = email_col]   
+                                   
+test_transaction[,(email_col) := 
+            lapply(.SD, function(x) gsub("twc.com|charter.net", "spectrum", x)), .SDcols = email_col]    
+```
+
+
+## data merge
+```{r merge}
+train_transaction$trans_na <- rowSums(is.na(train_transaction))
+train_id$id_na <- rowSums(is.na(train_id))
+test_transaction$trans_na <- rowSums(is.na(test_transaction))
+test_id$id_na <- rowSums(is.na(test_id))
+
+drop_col <- c('dist2', 'C3', 'D7', 'V1', 'V2', 'V14', 'V15', 'V16', 'V18', 'V21', 'V22', 'V23',
+              'V24', 'V25', 'V26', 'V27', 'V28', 'V31', 'V32', 'V39', 'V41', 'V42', 'V43', 'V50', 'V55', 
+              'V57', 'V65', 'V66', 'V67', 'V68', 'V77', 'V79', 'V86', 'V88', 'V89', 'V98', 'V101', 'V102', 'V103',
+              'V104', 'V105', 'V106', 'V107', 'V108', 'V109', 'V110', 'V111', 'V112', 'V113', 'V114', 'V115', 'V116', 
+              'V117', 'V118', 'V119', 'V120', 'V121', 'V122', 'V123', 'V124', 'V125', 'V129', 'V132', 'V133', 'V134', 
+              'V135', 'V136', 'V137', 'V141', 'V142', 'V144', 'V148', 'V153', 'V155', 'V157', 'V168', 'V174', 'V179', 
+              'V181', 'V183', 'V185', 'V186', 'V190', 'V191', 'V192', 'V193', 'V194', 'V196', 'V198', 'V199', 'V211', 
+              'V218', 'V230', 'V232', 'V235', 'V236', 'V237', 'V240', 'V241', 'V248', 'V250', 'V252', 'V254', 'V255', 
+              'V260', 'V269', 'V281', 'V284', 'V286', 'V290', 'V293', 'V295', 'V296', 'V297', 'V298', 'V299', 'V300', 
+              'V301', 'V302', 'V305', 'V309', 'V311', 'V316', 'V318', 'V319', 'V320', 'V321', 'V325', 'V327', 'V328', 
+              'V330', 'V334', 'V337', 'V339')
+
+train <- train_transaction %>% left_join(train_id)
+test <- test_transaction %>% left_join(test_id)
+
+
+rm(train_id,train_transaction,test_id, test_transaction); gc(); gc()
+
+# using single hold-out validation (20%)
+tr_idx1 <- which(train$TransactionDT < quantile(train$TransactionDT, 0.8))
+tr_idx2 <- which(train$TransactionDT > quantile(train$TransactionDT, 0.8))
+
+train[,drop_col] <- NULL
+test[,drop_col] <- NULL
+
+train$mix_na <- rowSums(is.na(train))
+test$mix_na <- rowSums(is.na(test))
+
+tem <- train %>% bind_rows(test) %>%
+  mutate(hr = floor( (TransactionDT / 3600) %% 24 ),
+         weekday = floor( (TransactionDT / 3600 / 24) %% 7)
+        ) %>%
+  select(-TransactionID,-TransactionDT)
+```
+
+## FE
+```{r FE}
+# FE part1 : Count encoding
+char_features <- tem[,colnames(tem) %in% 
+                     c("ProductCD","card1","card2","card3","card4","card5","card6","addr1","addr2","P_emaildomain",
+                   "R_emaildomain","M1","M2","M3","M4","M5","M6","M7","M8","M9","DeviceType","DeviceInfo","id_12",
+                   "id_13","id_14","id_15","id_16","id_17","id_18","id_19","id_20","id_21","id_22","id_23","id_24",
+                   "id_25","id_26","id_27","id_28","id_29","id_30","id_31","id_32","id_33","id_34","id_35","id_36",
+                   "id_37","id_38", "BuildInfo")]
+
+fe_part1 <- data.frame(0)
+for(a in colnames(char_features) ){
+  tem1 <- char_features %>% group_by(.dots = a) %>% mutate(count = length(card4)) %>% ungroup() %>% select(count)
+  colnames(tem1) <- paste(a,"__count_encoding",sep="")
+  fe_part1 <- data.frame(fe_part1,tem1)
+}
+
+fe_part1 <- fe_part1[,-1]
+rm(char_features,tem1) ; invisible(gc())
+cat("fe_part1 ncol :" , ncol(fe_part1) ,"\n" )
+#############################################################################################################
+# label 
+
+char_features <- colnames(tem[, sapply(tem, class) %in% c('character', 'factor')])
+for (f in char_features){
+  levels <- unique(tem[[f]])
+  tem[[f]] <- as.integer(factor(tem[[f]], levels=levels))
+}
+
+
+tem <- data.frame(tem, fe_part1)
+
+tem <- tem %>% add_count(card1, weekday) %>% rename("n_card1_w" = n) %>%
+        add_count(card2, weekday) %>% rename("n_card2_w" = n) %>% 
+        add_count(card3, weekday) %>% rename("n_card3_w" = n) %>%
+        add_count(card4, weekday) %>% rename("n_card4_w" = n) %>% 
+        add_count(card5, weekday) %>% rename("n_card5_w" = n) %>% 
+        add_count(card6, weekday) %>% rename("n_card6_w" = n) %>% 
+        add_count(P_emaildomain, weekday) %>% rename("n_P_emaildomain_w" = n) %>%
+        add_count(DeviceInfo, weekday) %>% rename("n_DeviceInfo_w" = n)  %>% 
+        
+        add_count(card1, hr) %>% rename("n_card1_hr" = n) %>%
+        add_count(card2, hr) %>% rename("n_card2_hr" = n) %>% 
+        add_count(card3, hr) %>% rename("n_card3_hr" = n) %>%
+        add_count(card4, hr) %>% rename("n_card4_hr" = n) %>% 
+        add_count(card5, hr) %>% rename("n_card5_hr" = n) %>% 
+        add_count(card6, hr) %>% rename("n_card6_hr" = n) %>% 
+        add_count(P_emaildomain, hr) %>% rename("n_P_emaildomain_hr" = n) %>%
+        add_count(DeviceInfo, hr) %>% rename("n_DeviceInfo_hr" = n) %>%
+
+        add_count(card1, weekday, hr) %>% rename("n_card1_w_hr" = n) %>%
+        add_count(card2, weekday, hr) %>% rename("n_card2_w_hr" = n) %>% 
+        add_count(card3, weekday, hr) %>% rename("n_card3_w_hr" = n) %>%
+        add_count(card4, weekday, hr) %>% rename("n_card4_w_hr" = n) %>% 
+        add_count(card5, weekday, hr) %>% rename("n_card5_w_hr" = n) %>% 
+        add_count(card6, weekday, hr) %>% rename("n_card6_w_hr" = n) %>% 
+        add_count(P_emaildomain, weekday, hr) %>% rename("n_P_emaildomain_w_hr" = n) %>%
+        add_count(DeviceInfo, weekday, hr) %>% rename("n_DeviceInfo_w_hr" = n) 
+
+tem2 <- tem %>%
+  group_by_(.dots=c("weekday")) %>%
+  summarise(weekday_C13_sd = sd(C13),
+            weekday_V258_sd = sd(V258),
+            weekday_C1_sd = sd(C1),
+            weekday_C14_sd = sd(C14),
+            weekday_V201_sd = sd(V201),
+            weekday_TransactionAmt_sd = sd(TransactionAmt),
+            weekday_D2_sd = sd(D2),
+            weekday_V257_sd = sd(V257),
+            weekday_D15_sd = sd(D15)
+  )
+
+tem <- left_join(tem , tem2, by= "weekday")
+
+tem3 <- tem %>%
+  group_by_(.dots=c("hr")) %>%
+  summarise(hr_C13_sd = sd(C13),
+            hr_V258_sd = sd(V258),
+            hr_C1_sd = sd(C1),
+            hr_C14_sd = sd(C14),
+            hr_V201_sd = sd(V201),
+            hr_TransactionAmt_sd = sd(TransactionAmt),
+            hr_D2_sd = sd(D2),
+            hr_V257_sd = sd(V257),
+            hr_D15_sd = sd(D15)
+  )
+
+tem <- left_join(tem , tem3, by= "hr")
+
+tem4 <- tem %>%
+  group_by_(.dots=c("weekday", "hr")) %>%
+  summarise(weekday_hr_C13_sd = sd(C13),
+            weekday_hr_V258_sd = sd(V258),
+            weekday_hr_C1_sd = sd(C1),
+            weekday_hr_C14_sd = sd(C14),
+            weekday_hr_V201_sd = sd(V201),
+            weekday_hr_TransactionAmt = sd(TransactionAmt),
+            weekday_hr_D2_sd = sd(D2),
+            weekday_hr_V257_sd = sd(V257),
+            weekday_hr_D15_sd = sd(D15)
+  )
+
+tem <- left_join(tem , tem4, by= c("weekday", "hr"))
+
+train <- tem[1:nrow(train),]
+test <- tem[-c(1:nrow(train)),]
+rm(tem, tem2, tem3, tem4, fe_part1) ; gc(); gc()
+```
+
+
+## model
+```{r model}
+# FE part1 : Count encoding
+cat("train_col :" , ncol(train), "test_col :", ncol(test) ,"\n" )
+
+
+d0 <- lgb.Dataset(data.matrix( train[tr_idx1,] ), label = y[tr_idx1] )
+dval <- lgb.Dataset(data.matrix( train[tr_idx2,] ), label = y[tr_idx2] ) 
+
+# not tuned
+
+lgb_param <- list(boosting_type = 'gbdt',
+                  objective = "binary" ,
+                  metric = "AUC",
+                  boost_from_average = "false",
+                  learning_rate = 0.01,
+                  num_leaves = 192,
+                  min_gain_to_split = 0,
+                  feature_fraction = 0.3,
+                 # feature_fraction_seed = 666666,
+                  bagging_freq = 1,
+                  bagging_fraction = 0.7,
+                 # min_sum_hessian_in_leaf = 0,
+                  min_data_in_leaf = 100,
+                  lambda_l1 = 0,
+                  lambda_l2 = 0,
+                  random_state = 71
+                 )
+  
+  
+
+valids <- list(valid = dval)
+lgb <- lgb.train(params = lgb_param,  data = d0, nrounds = 15000, 
+                 eval_freq = 200, valids = valids, early_stopping_rounds = 200, verbose = 1)
+
+
+oof_pred <- predict(lgb, data.matrix(train[tr_idx2,]))
+cat("best iter :" , lgb$best_iter, "best score :", AUC(oof_pred, y[tr_idx2]) ,"\n" )
+iter <- lgb$best_iter
+
+rm(lgb,d0,dval) ; invisible(gc())
+```
+
+
+```{r exp}
+# full data
+d0 <- lgb.Dataset(data.matrix(train), label = y)
+lgb <- lgb.train(params = lgb_param, data = d0, nrounds = iter*1.03, verbose = -1)
+pred <- predict(lgb, data.matrix(test))
+
+imp <- lgb.importance(lgb)
+sub <- data.frame(read_csv("sample_submission.csv"))
+sub[,2] <- pred
+```
+
+```{r out}
+write.csv(sub,"sub.csv",row.names=F)
+write.csv(imp,"imp.csv",row.names=F)
+```
+

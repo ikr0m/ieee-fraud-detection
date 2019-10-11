@@ -1,0 +1,128 @@
+---
+title: "Untitled"
+author: "Akifumi Eguchi"
+date: "2019/8/1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r library}
+library(data.table); library(tidyverse); library(tidymodels); library(uwot); library(DataExplorer)
+library(irlba); library(fastknn); library(recipes); library(fastDummies); library(repr)
+library(sessioninfo); library(visdat)
+```
+
+
+
+```{r import data, echo=FALSE}
+train_id <- fread("train_identity.csv") %>% data.frame
+train_transaction <- fread("train_transaction.csv") %>% data.frame
+
+test_id <- fread("test_identity.csv") %>% data.frame
+test_transaction <- fread("test_transaction.csv") %>% data.frame
+```
+
+
+```{r import data, echo=FALSE}
+print(paste("Number of TransactionID in test_identity not in test_transaction:", 
+            length(setdiff(unique(test_id$TransactionID), unique(test_transaction$TransactionID))))) #every test_id in test_transaction
+
+
+print(paste("Number of TransactionID in train_identity not in train_transaction:", 
+            length(setdiff(unique(train_id$TransactionID), unique(train_transaction$TransactionID))))) #every train_id in train_transaction
+
+
+print(paste("Is TransactionID unique: ", dim(test_id)[1] == length(unique(test_id$TransactionID)) &
+                                         dim(test_transaction)[1] == length(unique(test_transaction$TransactionID)) &  
+                                         dim(train_id)[1] == length(unique(train_id$TransactionID)) &
+                                         dim(train_transaction)[1] == length(unique(train_transaction$TransactionID))))
+
+print(paste("Are the columns of identity data tables identical: ", identical(names(train_id), names(test_id))))
+
+fraud_dt <- train_transaction[,1:2]
+test_transaction[, isFraud:=0.5]
+setcolorder(test_transaction, c("TransactionID","isFraud",
+                                setdiff(names(test_transaction), c("TransactionID", "isFraud"))))
+
+print(paste("Are the columns of transaction data tables identical: ", 
+                identical(names(test_transaction), names(train_transaction))))
+print(paste("Columns that identity and transaction have in common:", 
+                intersect(names(train_transaction), names(train_id))))
+print(paste("Total number of fraudulent transactions in training set: ", sum(train_transaction[,2])))
+print(paste("Total number of non-fraudulent transactions in training set: ", nrow(train_transaction)-sum(train_transaction[,2])))
+```
+
+```{r train_id str}
+str(train_id)
+```
+
+```{r train_transaction str}
+str(train_transaction)
+```
+
+```{r train_id intro}
+plot_intro(train_id)
+```
+
+```{r train_transaction intro}
+plot_intro(train_transaction)
+```
+
+```{r train_id missing, fig.width=5, fig.height=10}
+plot_missing(train_id)
+```
+
+```{r train_transaction missing, fig.width=5, fig.height=50}
+plot_missing(train_transaction)
+```
+
+いくつかの変数は同じ様に欠損している可能性がある？
+
+```{r train_id vis missing, fig.width=10, fig.height=5}
+vis_miss(train_id, warn_large_data = FALSE)
+```
+
+欠損のパターン似ている
+
+```{r train_transaction vis missing, fig.width=20, fig.height=10}
+vis_miss(train_transaction, warn_large_data = FALSE)
+```
+
+欠測が起きてるところでは同じように起きているという感じがある。よい。
+
+```{r train_transaction missing nega, fig.width=5, fig.height=50}
+plot_missing(train_transaction %>% filter(isFraud == 0))
+```
+
+
+```{r train_transaction missing posi, fig.width=5, fig.height=50}
+plot_missing(train_transaction %>% filter(isFraud == 1))
+```
+欠測の割合がターゲットで異なる可能性もある。うまく補完したいところ。
+
+```{r train_transaction vis missing nega, fig.width=20, fig.height=10}
+vis_miss(train_transaction %>% filter(isFraud == 0), warn_large_data = FALSE)
+```
+
+```{r train_transaction vis missing posi, fig.width=20, fig.height=10}
+vis_miss(train_transaction %>% filter(isFraud == 1), warn_large_data = FALSE)
+```
+
+そもそも欠測が少ないんだよな。Kernelのコードでも欠測カウントされてたけど。
+
+```{r join, echo=FALSE}
+train <- left_join(train_transaction, train_id)
+test <- left_join(test_transaction, test_id)
+
+dim(train) %>% print
+dim(test) %>% print
+```
